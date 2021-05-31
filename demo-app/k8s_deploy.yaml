@@ -1,0 +1,34 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spot-demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spot-demo
+  template:
+    metadata:
+      labels:
+        app: spot-demo
+    spec:
+      containers:
+        - name: spot-demo
+          image: "${ECR_REGISTRY}/${IMAGE_TAG}"
+          imagePullPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spot-demo
+  labels:
+    app: spot-demo
+spec:
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+  type: LoadBalancer
+  selector:
+    app: spot-demo

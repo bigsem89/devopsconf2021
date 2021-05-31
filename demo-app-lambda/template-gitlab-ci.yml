@@ -1,0 +1,73 @@
+variables:
+  ECR_REGISTRY: ${ECR_ADDRESS}
+  ACCOUNT_ID: ${ACCOUNT_ID}
+  IMAGE_NAME: devopsconf-demo-lambda
+  REGION: eu-central-1
+  ROLE_NAME: LambdaExecutionRole
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+
+stages:
+- build
+- deploy
+
+build_image:
+  stage: build
+  image: docker:20.10.6
+  before_script:
+    - docker info
+    - apk add --no-cache curl python3 py3-pip python3-dev build-base git
+    - curl -s http://169.254.169.254/latest/meta-data/hostname
+    - curl -s http://169.254.169.254/latest/meta-data/placement/region
+    - pip install awscli
+    - aws --version
+    - pip install aws-sam-cli
+    - sam --version
+  script:
+    - sam init --no-interactive -n demo-app-lambda --package-type Image --base-image amazon/python3.7-base
+    - cd demo-app-lambda/
+    - rm -rf hello_world/
+    - rm -rf tests/
+    - rm -rf events/
+    - |
+      cat << EoF > template.yaml
+      AWSTemplateFormatVersion: '2010-09-09'
+      Transform: AWS::Serverless-2016-10-31
+      Description: demo app
+
+      Globals:
+        Function:
+          Timeout: 3
+
+      Resources:
+        DemoAppFunction:
+          Type: AWS::Serverless::Function
+          Properties:
+            Role: arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME
+            PackageType: Image
+          Metadata:
+            DockerTag: python3.7-v1
+            DockerContext: ./demo-app
+            Dockerfile: Dockerfile
+      EoF
+    - mkdir demo-app
+    - find ../ -maxdepth 1 -type f | xargs -I {} cp {} demo-app/
+    - sam build
+    - sam package --output-template-file packaged-template.yaml --image-repository $ECR_REGISTRY/$IMAGE_NAME --region $REGION
+  artifacts:
+    paths:
+    - demo-app-lambda/packaged-template.yaml
+
+deploy_to_lambda:
+  stage: deploy
+  image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+  dependencies:
+    - build_image
+  before_script:
+    - apt-get update
+    - apt-get install -y python3 python3-pip build-essential
+    - aws --version
+    - pip install aws-sam-cli
+    - sam --version
+  script:
+    - sam deploy -t demo-app-lambda/packaged-template.yaml --stack-name demo-app-lambda --image-repository $ECR_REGISTRY/$IMAGE_NAME --region $REGION
